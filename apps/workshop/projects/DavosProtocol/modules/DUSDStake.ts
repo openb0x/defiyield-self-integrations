@@ -1,8 +1,14 @@
 import type { ModuleDefinitionInterface } from '@defiyield/sandbox';
+import { BigNumber } from 'bignumber.js';
+import { Provider } from 'ethcall';
 
 import stDUSDAbi from '../abis/stDUSD.abi.json';
 
 const stDUSDAddress = '0xe69a1876bdacfa7a7a4f6d531be2fde843d2165c';
+
+const SECONDS_IN_YEAR = new BigNumber(31536000);
+const HUNDRED = new BigNumber(100);
+const ZERO = new BigNumber(0);
 
 export const DUSDStake: ModuleDefinitionInterface = {
   name: 'DUSDStake',
@@ -17,14 +23,20 @@ export const DUSDStake: ModuleDefinitionInterface = {
     const [token] = tokens;
     const contract = new ethcall.Contract(stDUSDAddress, stDUSDAbi);
 
-    const [totalSupply] = await ethcallProvider.all<typeof BigNumber>([contract.totalStaking()]);
+    const [totalSupply] = await ethcallProvider.all<[BigNumber]>([contract.totalStaking()]);
     const tvl = (Number(totalSupply.toString()) / 10 ** token?.decimals) * (token?.price || 0);
 
-    let apr = 0;
-    try {
-      const response = await axios.get('https://stake.ly/api/stats/stDUSD/apr');
-      if (response.data?.value) apr = response.data.value / 100;
-    } catch {}
+    const sdk = await ContractsManager.getInstance({
+      chainId: 'polygon', // Replace with the correct chain ID
+      forceRead: true,
+    });
+    const jarContract = await sdk.getJarContract();
+
+    const [rate] = await ethcallProvider.all<[BigNumber]>([jarContract.methods.rate().call()]);
+
+    const APR = rate.isGreaterThan(ZERO)
+      ? rate.multipliedBy(SECONDS_IN_YEAR).multipliedBy(HUNDRED).div(totalSupply)
+      : ZERO;
 
     return [
       {
@@ -33,7 +45,7 @@ export const DUSDStake: ModuleDefinitionInterface = {
           {
             token: tokens[0],
             tvl,
-            apr: { year: apr },
+            apr: { year: APR.toNumber() },
           },
         ],
       },
@@ -47,7 +59,7 @@ export const DUSDStake: ModuleDefinitionInterface = {
 
     const contract = new ethcall.Contract(stDUSDAddress, stDUSDAbi);
 
-    const [balance] = await ethcallProvider.all<typeof BigNumber>([contract.balanceOf(user)]);
+    const [balance] = await ethcallProvider.all<[BigNumber]>([contract.balanceOf(user)]);
 
     return [
       {
